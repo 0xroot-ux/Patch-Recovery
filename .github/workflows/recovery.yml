@@ -23,37 +23,40 @@ jobs:
 
     - name: Fetch image from URL
       run: |
-        pwd
-        ls
-        wget "${{ github.event.inputs.RECOVERY_URL }}" -O recovery.img
+        wget "${{ github.event.inputs.RECOVERY_URL }}" -O recovery.img.lz4
+        lz4 -d recovery.img.lz4 recovery.img
 
     - name: Patch Process-1
       run: |
-        chmod a+x script1.sh magiskboot
+        chmod +x script1.sh magiskboot
         ./script1.sh recovery.img || true
 
     - name: Patch Process-2
       run: |
-        chmod a+x script2.sh
+        chmod +x script2.sh
         ./script2.sh || true
 
         python3 avbtool extract_public_key --key phh.pem --output phh.pub.bin
 
         NEW_BOOT=$(find . -name "new-boot.img" | head -n 1)
-        echo "Found new boot image at: $NEW_BOOT"
+        echo "Using $NEW_BOOT"
         mv "$NEW_BOOT" recovery-patched.img
+
+        IMG_SIZE=$(wc -c < recovery.img)
+        BLOCK=4096
+        PART_SIZE=$(( ( (IMG_SIZE + BLOCK - 1) / BLOCK ) * BLOCK ))
+        echo "IMG_SIZE=$IMG_SIZE PART_SIZE=$PART_SIZE"
 
         python3 avbtool add_hash_footer \
           --partition_name recovery \
-          --partition_size $(wc -c recovery.img | cut -f 1 -d ' ') \
+          --partition_size "$PART_SIZE" \
           --image recovery-patched.img \
           --key phh.pem \
           --algorithm SHA256_RSA4096
 
         mkdir -p output
-        mv r-patched.img output/recovery.img
+        mv recovery-patched.img output/recovery.img
         cd output
-
         tar cvf fastbootd-recovery.tar recovery.img
         md5sum -t fastbootd-recovery.tar >> fastbootd-recovery.tar
         mv fastbootd-recovery.tar fastbootd-recovery.tar.md5
@@ -61,6 +64,6 @@ jobs:
     - name: Upload to Release
       uses: softprops/action-gh-release@v2
       with:
-        files: output/*.md5
+        files: output/*.tar.md5
         name: Patched-Recovery
         tag_name: ${{ github.run_id }}
